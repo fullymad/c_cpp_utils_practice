@@ -1,0 +1,1 @@
+cc str_reduction.c -o sr

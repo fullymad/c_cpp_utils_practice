@@ -1,0 +1,2 @@
+cc -lc++ data.cpp -o data
+cc -lc++ choco.cpp -o choco

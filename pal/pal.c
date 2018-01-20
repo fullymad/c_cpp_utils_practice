@@ -1,0 +1,900 @@
+/*****************************************************************************
+You have two strings,  and . Find a string, , such that:
+
+ can be expressed as  where  is a non-empty substring of  and  is a non-empty substring of .
+ is a palindromic string.
+The length of  is as long as possible.
+For each of the  pairs of strings ( and ) received as input, find and print string  on a new line. If you're able to form more than one valid string , print whichever one comes first alphabetically. If there is no valid answer, print  instead.
+
+Input Format
+
+The first line contains a single integer, , denoting the number of queries. The subsequent lines describe each query over two lines:
+
+The first line contains a single string denoting .
+The second line contains a single string denoting .
+Constraints
+
+
+
+ and  contain only lowercase English letters.
+Sum of |a| over all queries does not exceed 
+Sum of |b| over all queries does not exceed 
+Output Format
+
+For each pair of strings ( and ), find some  satisfying the conditions above and print it on a new line. If there is no such string, print  instead.
+
+Sample Input
+
+3
+bac
+bac
+abc
+def
+jdfh
+fds
+Sample Output
+
+aba
+-1
+dfhfd
+Explanation
+
+We perform the following three queries:
+
+Concatenate  with  to create .
+We're given  and ; because both strings are composed of unique characters, we cannot use them to form a palindromic string. Thus, we print .
+Concatenate  with  to create . Note that we chose these particular substrings because the length of string  must be maximal.
+*****************************************************************************/
+
+/* Following needed for strdup declaration to be picked up */
+#define _BSD_SOURCE
+
+#include <stdio.h>
+#include <string.h>
+#include <math.h>
+#include <stdlib.h>
+#include <assert.h>
+
+#define MAX_STR_SIZE 100001
+#define MAX_INPUT_COUNT 10
+
+#define NUM_DISTINCT_CHARS 26
+#define NO_MATCH_FOUND -1
+
+#define PARSE_FORWARD 0
+#define PARSE_BACKWARD 1
+
+typedef struct StrPair {
+	char	*first_str;
+	char	*second_str;
+} StrPair;
+
+/* Stores the index boundaries of palindrome as 2 segments in 2 strings. The
+ * matched string will be s1_low to s1_high of string 1 concatenated with
+ * s2_low to s2_high of string 2 (all 4 indices inclusive) */
+typedef struct MatchBounds {
+	int		s1_low;
+	int		s1_high;
+	int		s2_low;
+	int		s2_high;
+} MatchBounds;
+
+/*****************************************************************************
+* Returns True if the specific substring of the given string is a palindrome.
+* The substring is defined by the given start and end indices of the input
+* string.
+*
+* NOTE: Special case - a single character is considered a palindrome.
+*
+* Input:
+*   str - Input string
+*   start_index - Index of the first character of the substring
+*   end_index - Index of the last character of the substring
+*
+* Returns:
+*   1 if the substring is a palindrome, 0 otherwise.
+*****************************************************************************/
+static int
+is_palindrome(
+	char	*str,
+	int		start_index,
+	int		end_index
+)
+{
+	int 	palindrome = 0; /* For now, NOT a palindrome */
+
+	assert (start_index <= end_index);
+
+	/* DEBUG */
+	printf("is_palindrome start_index %d, end_index %d\n",
+		start_index, end_index);
+
+	while (str[start_index] == str[end_index]) {
+		start_index++;
+		end_index--;
+
+		if (start_index >= end_index) {
+			palindrome = 1;
+		}
+	}
+
+	return palindrome;
+} /* end is_palindrome */
+
+/*****************************************************************************
+* Returns a specific string index from the list of indices corresponding to the
+* given character
+*
+* ASSUMPTION: First element of array tells the count of stored indices
+*
+* Input:
+*   matched_indices: Array of pointers to lists of indices corresponding to
+*     letters 'a' through 'z' (all lowercase)
+*   matched_char: One of 'a' - 'z' whose list needs to be used
+*   match_num: If 'n', the nth string index where match found for this
+*     character. This value will be 1 through count of indices in list.
+*   parse_direction: PARSE_FORWARD for nth index from start of string and
+*     PARSE_BACKWARD for nth index going back from end of string
+*
+* Returns
+*   The string index for the nth match
+*
+* EXAMPLE data:
+*   When character 'd' is matched with the string "divided", the 4th element
+*     of matched_indices will point to an integer array of size 4. The elements
+*     of this integer array (0 throu 3) will be 3, 0, 4, 6. Element 0 has the
+*     count of 3 (as there are 3 occurrences of 'd' in "divided"). As the
+*     string indices that match 'd' are 0, 4 and 6, the last 3 elements of the
+*     integer array contain these numbers. If input has matched_char = 'd' and
+*     match_num = 1, the value 0 will be returned for PARSE_FORWARD and 6 will
+*     be returned for PARSE_BACKWARD (as this is match number 1 from the end).
+*****************************************************************************/
+static unsigned int
+get_next_matched_index(
+	unsigned int	*matched_indices[],
+	char			matched_char,
+	int				match_num,
+	int				parse_direction
+)
+{
+	unsigned int	*int_list_ptr;
+	unsigned int	matched_pos;
+	int				element_id;
+
+	assert(matched_indices != NULL && match_num >= 1);
+	assert(matched_char >= 'a' && matched_char <= 'z');
+
+	/* Destination array holds data for 'a' through 'z' in elements 0 to 25 */
+	element_id = matched_char - 'a';
+
+	/* Get pointer to integer list for the given character */
+	int_list_ptr = matched_indices[element_id];
+	
+	/* If character never found OR asking for beyond the last one found ...*/
+	if (int_list_ptr == NULL || match_num > int_list_ptr[0]) {
+		matched_pos = NO_MATCH_FOUND;
+	}
+	else {
+		/* Reverse the order, as match_num 1 will be the last in list */
+		if (parse_direction == PARSE_BACKWARD) {
+			match_num = int_list_ptr[0] - match_num + 1;
+		}
+		matched_pos = int_list_ptr[match_num];
+	}
+
+	return matched_pos;
+
+} /* end get_next_matched_index */
+
+/*****************************************************************************
+* Looks for the longest palindrome substring of the given string starting at
+* the given index and returns the 'end' index of the substring. The direction
+* of search (within the string) is either forward or backward depending on the
+* input parameter.
+*
+* As can be seen above, only the part of the input string that is at/after OR
+* at/before will be considered (for the cases of PARSE_FORWARD and
+* PARSE_BACKWARD respectively).
+*
+* Uses the given map of characters to their locations in input string.
+*
+* The first character of the palindrome is fixed at the given start index and
+* the return value will be at least 1 (for the special case of a single
+* character palindrome).
+*
+* Input:
+*   str - Input string
+*	str_size - Length of input string
+*   start_index - The first character of the palindrome
+*   matched_indices: Array of pointers to lists of indices corresponding to
+*     letters 'a' through 'z' (all lowercase) where str contains that letter
+*   palindrome_len_cache: Cache of previously computed length for each index.
+*     Caller should allocate enough space and initialize cache to set length to
+*     0. It should also make sure to pass the right cache for given 'str' and
+*     'parse_direction'
+*   parse_direction - PARSE_FORWARD for forward match and PARSE_BACKWARD for
+*     backward match
+*
+* Return:
+*	Number of characters in the palindrome
+*
+* Examples:
+*   'abcbd', index 1, PARSE_FORWARD - Returns 3 ('bcb')
+*   'abcbd', index 2, PARSE_FORWARD - Returns 1 ('c')
+*   'abbd', index 1, PARSE_BACKWARD - Returns 1 ('b')
+*   'kkbkbkk', index 5, PARSE_BACKWARD - Returns 5 ('kbkbk')
+*****************************************************************************/
+static int
+get_palindrome_len(
+	char	*str,
+	int		str_size,
+	int		start_index,
+	unsigned int *matched_indices[],
+	unsigned int *palindrome_len_cache,
+	int		parse_direction
+)
+{
+	char	start_char;
+	int		match_num;
+	int		next_match_pos;
+	int		i;
+	int		count = 1;
+
+	assert(NULL != str && start_index >= 0 && str_size > 0);
+
+	/* If length computed before for this index, return from cache */
+	if (palindrome_len_cache[start_index] != 0) {
+		return palindrome_len_cache[start_index];
+	}
+
+	/* DEBUG */
+	printf("get_palindrome_len start_index %d, direction %d\n",
+		start_index, parse_direction);
+
+	/* Get the first character of the palindrome using start_index */
+	start_char = str[start_index];
+
+	/* The last character of the palindrome has to be the same as start_char.
+	 * For each occurrence of this character in the 'remainder' of the string,
+	 * check if it is the other end of a palindrome, settling for the longest
+	 * such palindrome.
+	 *
+	 * When searching for the palindrome from given position forward, the
+	 * longest palindrome is matched by starting from the end and going
+	 * backward from the matching position (and inversely when searching from
+	 * given position backward), hence the flipping of direction when invoking
+	 * function that returns matching position.
+	 */
+
+	if (PARSE_FORWARD == parse_direction) {
+		match_num = 1;
+		while (1) {
+			next_match_pos = get_next_matched_index(matched_indices,
+				start_char, match_num, PARSE_BACKWARD);
+
+			if (next_match_pos == NO_MATCH_FOUND ||
+				next_match_pos <= start_index) {
+				break;
+			}
+			/* Check if this is a subset of a palindrome already encountered.
+			 * Only the closest surrounding palindrome is checked, so the
+			 * benefit of this optimization is minimal.
+			 * Example: abccba. When checking between 'b' and 'b', cache has
+			 * length 6 for index 0, so store 4 for index 1. */
+			else if ( start_index != 0
+				&& (next_match_pos - start_index + 1) ==
+					(palindrome_len_cache[start_index - 1] - 2) ) {
+				count = next_match_pos - start_index + 1;
+				break;
+			}
+			else if (is_palindrome(str, start_index, next_match_pos)) {
+				count = next_match_pos - start_index + 1;
+				break;
+			}
+			match_num++;
+		}
+	}
+	else { /* PARSE_BACKWARD */
+		match_num = 1;
+		while (1) {
+			next_match_pos = get_next_matched_index(matched_indices,
+				start_char, match_num, PARSE_FORWARD);
+
+			if (next_match_pos == NO_MATCH_FOUND ||
+				next_match_pos >= start_index) {
+				break;
+			}
+			/* Check if this is a subset of a palindrome already encountered */
+			else if ( start_index != str_size - 1
+				&& (start_index - next_match_pos + 1) ==
+					(palindrome_len_cache[start_index + 1] - 2) ) {
+				count = start_index - next_match_pos + 1;
+				break;
+			}
+			else if (is_palindrome(str, next_match_pos, start_index)) {
+				count = start_index - next_match_pos + 1;
+				break;
+			}
+			match_num++;
+		}
+	}
+
+	/* Update cache with the computed length */
+	palindrome_len_cache[start_index] = count;
+
+	return count;
+} /* end get_palindrome_len */
+
+/*****************************************************************************
+* Utility function to concatenate the matched substrings from the 2 strings.
+* Assumes that the buffer has enough memory for the concatenated string.
+*
+* Input:
+*   s1 - First string
+*   s2 - Second string
+*   result_bounds - Structure with bounding indices (inclusive) in s1 and s2
+*
+* Output:
+*   result_str - Updated with concatenated string
+*****************************************************************************/
+static void
+concat_sub_strs(
+	char	result_str[],
+	char	*s1,
+	char	*s2,
+	MatchBounds	result_bounds
+)
+{
+	int		count1 = result_bounds.s1_high - result_bounds.s1_low + 1;
+	int		count2 = result_bounds.s2_high - result_bounds.s2_low + 1;
+
+	assert(result_bounds.s1_low != -1 && result_bounds.s1_high != -1
+			&& result_bounds.s2_low != -1 && result_bounds.s2_high != -1);
+
+	strncpy(result_str, s1 + result_bounds.s1_low, count1);
+	strncpy(result_str + count1, s2 + result_bounds.s2_low, count2);
+	result_str[count1 + count2] = '\0';
+
+	return;
+} /* end concat_sub_strs */
+
+/*****************************************************************************
+* Utility function to process the new matched string and store it in given
+* structure if needed. Assumes that the length of the new string >= previously
+* matched string.
+* If it is equal in length (already determined by caller and passed in as a
+* boolean parameter), stores new string data only if it is alphabetically ahead
+* of the previous one. The new string is passed in as 2 substrings.
+*
+* Input:
+*   result_bounds - Pointer to the previous stored index boundaries of the
+*      matched substrings
+*   s1 - First string whose indices new_s1_low and new_s1_high denote the first
+*        substring (both positions included)
+*   s2 - Second string whose indices new_s2_low and new_s2_high denote the
+*        second substring (both positions included)
+*   new_s1_low, new_s1_high, new_s2_low, new_s2_high - As explained above
+*   same_length - True if new string of the same length, so only stored if
+*         alphabetically ahead
+*
+* Output:
+*   result_bounds - Potentially updated with the input index boundaries
+*****************************************************************************/
+static void
+process_new_match(
+	MatchBounds	*result_bounds,
+	char		*s1,
+	int			new_s1_low,
+	int			new_s1_high,
+	char		*s2,
+	int			new_s2_low,
+	int			new_s2_high,
+	int			same_length
+)
+{
+	int		prev_len_1, prev_len_2, new_len_1, new_len_2;
+	int		prev_s1_low, prev_s1_high, prev_s2_low, prev_s2_high;
+	int		cmp_len_1, cmp_len_2, cmp_len_3;
+	char	*prev_ptr_1, *prev_ptr_2, *prev_ptr_3;
+	char	*new_ptr_1, *new_ptr_2, *new_ptr_3;
+	int		need_to_store = 1;
+	int		cmp_result;
+
+	assert(result_bounds && s1 && s2);
+	assert(new_s1_low >= 0 && new_s1_high >= new_s1_low);
+	assert(new_s2_low >= 0 && new_s2_high >= new_s2_low);
+
+	/* If same length, check if new string is alphabetically ahead */
+	if (same_length) {
+
+		prev_s1_low = result_bounds->s1_low;
+		prev_s1_high = result_bounds->s1_high;
+		prev_s2_low = result_bounds->s2_low;
+		prev_s2_high = result_bounds->s2_high;
+
+		prev_len_1 = prev_s1_high - prev_s1_low + 1;
+		prev_len_2 = prev_s2_high - prev_s2_low + 1;
+
+		new_len_1 = new_s1_high - new_s1_low + 1;
+		new_len_2 = new_s2_high - new_s2_low + 1;
+
+		/* While the lengths are the same, the distribution between the 2
+		 * strings can be different. Either 2 or 3 comparisons are required.
+		 * Example:
+		 * Previous string - 'abc' in s1 and 'defghijk' in s2
+		 * New string - 'a' in s1 and 'bcdefghijk' in s2
+		 * 3 comparisons: 1 character in prev s1 and new s1 followed by 2
+		 *   characters in prev s1 and new s2 followed by 8 characters in
+		 *   prev s2 and new s2
+		 */
+
+		/* Compute pointers in previous and new strings for the 3 comparisons
+		 * and the corresponding lengths. */
+		cmp_len_1 = prev_len_1 < new_len_1 ? prev_len_1 : new_len_1;
+		cmp_len_2 = prev_len_1 - new_len_1;
+		if (cmp_len_2 < 0) {
+			cmp_len_2 *= (-1);
+		}
+		cmp_len_3 = (prev_len_1 + prev_len_2) - cmp_len_1 - cmp_len_2;
+
+		/* First comparison starts at start of s1 part in both sets */
+		prev_ptr_1 = s1 + prev_s1_low;
+		new_ptr_1 = s1 + new_s1_low;
+
+		if (prev_len_1 > new_len_1) { /* Previous string has longer 1st part */
+			prev_ptr_2 = prev_ptr_1 + cmp_len_1;
+			new_ptr_2 = s2 + new_s2_low;
+
+			prev_ptr_3 = s2 + prev_s2_low;
+			new_ptr_3 = new_ptr_2 + cmp_len_2;
+		}
+		else if (prev_len_1 < new_len_1) { /* New string has longer 1st part */
+			prev_ptr_2 = s2 + prev_s2_low;
+			new_ptr_2 = new_ptr_1 + cmp_len_1;
+
+			prev_ptr_3 = prev_ptr_2 + cmp_len_2;
+			new_ptr_3 = s2 + new_s2_low;
+		}
+		else { /* Both strings have 1st part of the same length */
+			prev_ptr_2 = new_ptr_2 = NULL; /* No need for extra comparison */
+			prev_ptr_3 = s2 + prev_s2_low;
+			new_ptr_3 = s2 + new_s2_low;
+		}
+
+		cmp_result = strncmp(new_ptr_1, prev_ptr_1, cmp_len_1);
+
+		if (cmp_result > 0) {
+			need_to_store = 0;
+		}
+		else if (0 == cmp_result) { /* Prev and new are identical so far */
+			if (cmp_len_2 != 0) {
+				cmp_result = strncmp(new_ptr_2, prev_ptr_2, cmp_len_2);
+			}
+			if (cmp_result > 0) {
+				need_to_store = 0;
+			}
+			else if (0 == cmp_result) { /* Prev and new are identical so far */
+				cmp_result = strncmp(new_ptr_3, prev_ptr_3, cmp_len_3);
+				if (cmp_result >= 0) {
+					need_to_store = 0;
+				}
+			}
+		}
+	} /* if same length */
+
+	/* Store the new match details */
+	if (need_to_store) {
+		result_bounds->s1_low = new_s1_low;
+		result_bounds->s1_high = new_s1_high;
+		result_bounds->s2_low = new_s2_low;
+		result_bounds->s2_high = new_s2_high;
+	}
+
+	return;
+} /* end process_new_match */
+
+/*****************************************************************************
+* Map each character ('a' through 'z' all lowercase), to the list of indices
+* where it is found in the given string.
+*
+* EXAMPLE data:
+*   If the string is "divided", character 'd' will be mapped to the list of
+*   integers 0, 4 and 6 as those are the indices of the string where 'd' is
+*   found. This map is stored in an integer array whose element 0 has the
+*   count (3 in this case) and the remaining elements contain the indices
+*   0, 4 and 6 in this case) as in {3, 0, 4, 6}.
+*
+* Input:
+*   source_str: Source string (Assumed to only contain 'a' through 'z')
+*
+* Returns:
+*   Pointer to a newly allocated array of integer pointers, each corresponding
+*   to a letter from 'a' to 'z'. Each integer pointer, in turn, is the start
+*   of an array of integers. If a letter is not found in the string, the
+*   top level pointer will be NULL.
+*****************************************************************************/
+static unsigned int **
+map_chars_to_matching_str_pos(
+	char	*source_str
+)
+{
+	unsigned int	**result_vector;
+	unsigned int	*indices_ptr;
+	unsigned int	counts[NUM_DISTINCT_CHARS] = {0};
+	char			*ptr = NULL;
+	unsigned int	source_len = 0; /* Length of source string */
+	int				source_i; /* Index into source string */
+	int				i;
+
+	assert(source_str != NULL);
+
+	/* First pass to get count of occurrences of each letter */
+	ptr = source_str;
+	source_len = 0;
+	for (ptr = source_str; *ptr != '\0'; ptr++) {
+		assert(*ptr >= 'a' && *ptr <= 'z');
+		counts[*ptr - 'a'] += 1;
+		source_len++;
+	}
+
+	result_vector = (unsigned int **)malloc(
+				sizeof(unsigned int *) * NUM_DISTINCT_CHARS); 
+	assert(result_vector != NULL);
+
+	/* Allocate memory for indices matched for all characters */
+	for (i = 0; i < NUM_DISTINCT_CHARS; i++) {
+		if (counts[i] == 0) {
+			result_vector[i] = NULL;
+		}
+		else {
+			result_vector[i] = (unsigned int *)malloc(
+					sizeof(unsigned int) * (counts[i] + 1));
+			assert(result_vector[i]);
+			result_vector[i][0] = 0; /* Initialize count for this character */
+		}
+	}
+
+	/* Second pass to store indices each character is matched at */
+	for (source_i = 0; source_i < source_len ; source_i++) {
+		i = source_str[source_i] - 'a'; /* Character's position in vector */
+		indices_ptr = result_vector[i]; /* List of indices for this letter */
+		indices_ptr[0] += 1; /* Increment number of matching indices */
+		indices_ptr[indices_ptr[0]] = source_i;
+	}
+
+	return(result_vector);
+
+} /* end map_chars_to_matching_str_pos */
+
+/*****************************************************************************
+* Given 2 strings s1 and s2, finds and prints the string s that satisfies
+* conditions below.
+*   - s = s1_sub + s2_sub where s1_sub and s2_sub are non-empty substrings of s1
+*   and s2 respectively.
+*   - s is a palindromic string
+*   - s is as long as possible
+*****************************************************************************/
+static void
+find_max_len_palindrome(
+	char	*s1,
+	char	*s2
+)
+{
+	int i, j, inner_i, s1_len, s2_len;
+	int result_len = 0;
+    char result_str[2 * MAX_STR_SIZE];
+	MatchBounds result_bounds = {-1, -1, -1, -1};
+	int tmp_s1_low = 0, tmp_s1_high = 0, tmp_s2_low = 0, tmp_s2_high = 0;
+	int start_s2_pos;
+	int matched = 0;
+	int match_len = 0;
+	int extra_match_len_1 = 0, extra_match_len_2 = 0;
+	int match_num, next_match_pos = 0;
+
+	assert(s1 && s2);
+
+	s1_len = (int)strlen(s1);
+	s2_len = (int)strlen(s2);
+
+	assert(0 != s1_len && 0 != s2_len);
+
+	/* DEBUG */
+	printf("s1 length %d, s2 length %d\n", s1_len, s2_len);
+
+	/* Cache the indices where each character is found in s1 and s2 */
+	unsigned int **map_to_s1_indices = map_chars_to_matching_str_pos(s1);
+	assert(map_to_s1_indices != NULL);
+
+	unsigned int **map_to_s2_indices = map_chars_to_matching_str_pos(s2);
+	assert(map_to_s2_indices != NULL);
+
+	/* Initialize cache that contains palindrome length starting at each
+	 * position. This palindrome is within each string in forward direction
+	 * starting at that position for s1 and in backward direction starting at
+	 * that position for s2. Use calloc() to initialize to 0.
+	 */
+	unsigned int *palindrome_len_cache_s1 = (unsigned int *)calloc(
+					s1_len, sizeof(unsigned int));
+	assert(palindrome_len_cache_s1 != NULL);
+
+	unsigned int *palindrome_len_cache_s2 = (unsigned int *)calloc(
+					s2_len, sizeof(unsigned int));
+	assert(palindrome_len_cache_s2 != NULL);
+
+	/* The main logic is as below.
+	 * - For each character in s1 (say, index i1), find each index where the
+	 * character is matched in s2 (say, index j2).
+	 * - Look for longest palindrome starting at s1.i1 and s2.j2 (the latter
+	 * string being parsed in reverse)
+	 * - Only parse starting s2 locations where this s1 character exists
+	 *
+	 * An array of 26 elements (for the characters 'a' to 'z') will contain
+	 * pointers to integer arrays holding the matching indices in s2 for that
+	 * character.
+	 */
+
+	result_str[0] = '\0';
+
+	/* Find palindrome with substring starting at each s1 position */
+	for (i = 0; i < s1_len; i++) {
+
+		/* For each s1 position, start comparison with end of s2 in reverse */
+
+		/* Get first location in s2 (from the end) that has this character */
+		match_num = 1;
+		next_match_pos = get_next_matched_index(map_to_s2_indices,
+				s1[i], match_num, PARSE_BACKWARD);
+
+		if (NO_MATCH_FOUND == next_match_pos) {
+			continue;
+		}
+		else {
+			start_s2_pos = next_match_pos;
+		}
+
+		/* If current match length is already more than what we will get if all
+		 * the remaining characters matched, finish checking. */
+		if ((s1_len - i + start_s2_pos + 1) < result_len) {
+			break;
+		}
+
+		while (start_s2_pos >= 0) {
+
+			/* If current match length is already more than what we will get if
+			 * all the remaining characters matched, go to next s1 index.
+			 */
+			if ((s1_len - i + start_s2_pos + 1) < result_len) {
+				break;
+			}
+
+			matched = 0;
+			match_len = 0;
+			for (j = start_s2_pos, inner_i = i;
+					j >= 0 && inner_i < s1_len; j--, inner_i++) {
+
+				if (s1[inner_i] == s2[j]) {
+
+					/* If matched anchor character from s1 ... */
+					if (inner_i == i) {
+
+						/* If previous s1 position and next s2 position
+						 * match, any new matched string will only be a subset
+						 * of an earlier match, so no need to match further -
+						 * pretend no match at all.
+						 */
+						if ( inner_i > 0 && j < (s2_len - 1)
+							&& s1[inner_i - 1] == s2[j + 1]
+							) {
+
+							matched = 0; /* As we look for the next match */
+							match_len = 0;
+							/* Out of for, so start with previous s2 position */
+							break;
+						}
+						
+					}
+
+					if (! matched) {
+						tmp_s1_low = tmp_s1_high = inner_i;
+						tmp_s2_low = tmp_s2_high = j;
+						matched = 1;
+					}
+					else {
+						tmp_s1_high++;
+						tmp_s2_low--;
+					}
+					match_len += 2;
+				}
+				else {
+					if (matched) {
+						/* Some of the remaining characters in either string
+						 * can potentially form a palindrome separately, thus
+						 * extending the matched palindrome, so extend the
+						 * string with the better matching addition (with
+						 * consideration for the alphabetic order).
+						 */
+
+						/* Get palindrome lengths from rest of s1 and s2 */
+						extra_match_len_1 = get_palindrome_len(s1, s1_len,
+							tmp_s1_high + 1, map_to_s1_indices,
+							palindrome_len_cache_s1, PARSE_FORWARD);
+						extra_match_len_2 = get_palindrome_len(s2, s2_len,
+							tmp_s2_low - 1, map_to_s2_indices,
+							palindrome_len_cache_s2, PARSE_BACKWARD);
+
+						/* Pick the longer of the 2 and if same length, pick
+						 * the one alphabetically ahead
+						 */
+						if (extra_match_len_1 > extra_match_len_2) {
+								tmp_s1_high += extra_match_len_1;
+								match_len += extra_match_len_1;
+						}
+						else if (extra_match_len_2 > extra_match_len_1) {
+								tmp_s2_low -= extra_match_len_2;
+								match_len += extra_match_len_2;
+						}
+						else if (s1[inner_i] <= s2[j]) {
+								tmp_s1_high += extra_match_len_1;
+								match_len += extra_match_len_1;
+						}
+						else {
+								tmp_s2_low -= extra_match_len_2;
+								match_len += extra_match_len_2;
+						}
+
+						if (match_len >= result_len) {
+							/* Copy new match and set result_len */
+							process_new_match(&result_bounds,
+								s1, tmp_s1_low, tmp_s1_high,
+								s2, tmp_s2_low, tmp_s2_high,
+								match_len == result_len ? 1 : 0);
+							result_len = match_len;
+						}
+					}
+					matched = 0; /* As we look for the next match */
+					match_len = 0;
+					break; /* Out of for, so start with previous s2 position */
+				}
+			} /* for loop for comparing substrings from s1 and s2 */
+
+			/* If still matched, reached end of s1 or s2 or both. Process
+			 * matched substrings */
+			if (matched) {
+				/* Some of the remaining characters in either string
+				 * can potentially form a palindrome separately, thus
+				 * extending the matched palindrome, so extend the string
+				 * that is alphabetically preferred
+				 */
+
+				/* Get palindrome lengths from rest of s1 or s2 */
+				if (inner_i < s1_len) { /* Reached end of s2 */
+					extra_match_len_1 = get_palindrome_len(s1, s1_len,
+						tmp_s1_high + 1, map_to_s1_indices,
+						palindrome_len_cache_s1, PARSE_FORWARD);
+					tmp_s1_high += extra_match_len_1;
+					match_len += extra_match_len_1;
+				}
+				else if (j >= 0) { /* Reached end of s1 */
+					extra_match_len_2 = get_palindrome_len(s2, s2_len,
+						tmp_s2_low - 1, map_to_s2_indices,
+						palindrome_len_cache_s2, PARSE_BACKWARD);
+					tmp_s2_low -= extra_match_len_2;
+					match_len += extra_match_len_2;
+				}
+
+				if (match_len >= result_len) {
+					/* Copy new match if qualifies and set result_len */
+					process_new_match(&result_bounds,
+						s1, tmp_s1_low, tmp_s1_high,
+						s2, tmp_s2_low, tmp_s2_high,
+						match_len == result_len ? 1 : 0);
+					result_len = match_len;
+				}
+				matched = 0; /* As we look for the next match */
+				match_len = 0;
+			}
+
+			/* Get next s2 position where s1 character matched before */
+			match_num++;
+			start_s2_pos = get_next_matched_index(map_to_s2_indices,
+					s1[i], match_num, PARSE_BACKWARD);
+		} /* while some substring to compare in s2 for this s1 index */
+	} /* main for each character in s1 */
+
+	/* Free the 2 caches of matched s1 and s2 indices for each character */
+	for (i = 0; i < NUM_DISTINCT_CHARS; i++) {
+		if (NULL != map_to_s1_indices[i]) {
+			free(map_to_s1_indices[i]);
+		}
+	}
+	free(map_to_s1_indices);
+
+	for (i = 0; i < NUM_DISTINCT_CHARS; i++) {
+		if (NULL != map_to_s2_indices[i]) {
+			free(map_to_s2_indices[i]);
+		}
+	}
+	free(map_to_s2_indices);
+
+/*
+	if (result_len == 0) {
+		strcpy(result_str, "-1");
+	}
+	else {
+		concat_sub_strs(result_str, s1, s2, result_bounds);
+	}
+*/
+
+	/* Free the 2 caches that store the palindrome lengths */
+	free(palindrome_len_cache_s1);
+	free(palindrome_len_cache_s2);
+
+/*
+	printf("%s\n", result_str);
+*/
+	if (result_len == 0) {
+		printf("-1\n");
+	}
+	else {
+		fwrite(s1 + result_bounds.s1_low, sizeof(char),
+				(result_bounds.s1_high - result_bounds.s1_low + 1), stdout);
+		fwrite(s2 + result_bounds.s2_low, sizeof(char),
+				(result_bounds.s2_high - result_bounds.s2_low + 1), stdout);
+		printf("\n");
+	}
+
+	return;
+} /* end find_max_len_palindrome */
+
+int main(int argc, const char *argv[])
+{
+	int		i;
+	int		count = 0;
+	StrPair	input_pair[MAX_INPUT_COUNT];
+	char	first_str[MAX_STR_SIZE];
+	char	second_str[MAX_STR_SIZE];
+
+    scanf("%d", &count);
+
+	assert(count > 0 && count <= 10);
+
+	/* Gather all input */
+    for (i = 0; i < count; i++) {
+		/* To avoid strdup() that can save space but decrease performance,
+		 * malloc for maximum length */
+
+		input_pair[i].first_str = (char *)malloc(MAX_STR_SIZE);
+		input_pair[i].second_str = (char *)malloc(MAX_STR_SIZE);
+		assert(NULL != input_pair[i].first_str &&
+				NULL != input_pair[i].second_str);
+        scanf("%s", input_pair[i].first_str);
+        scanf("%s", input_pair[i].second_str);
+
+		assert('\0' != input_pair[i].first_str[0] &&
+				'\0' != input_pair[i].second_str[0]);
+
+/*
+        scanf("%s", first_str);
+        scanf("%s", second_str);
+
+		assert('\0' != first_str[0] && '\0' != second_str[0]);
+
+		input_pair[i].first_str = strdup(first_str);
+		input_pair[i].second_str = strdup(second_str);
+
+		assert(NULL != input_pair[i].first_str &&
+				NULL != input_pair[i].second_str);
+*/
+    }
+
+	/* Process all input */
+    for (i = 0; i < count; i++) {
+		find_max_len_palindrome(input_pair[i].first_str,
+			input_pair[i].second_str);
+
+		free(input_pair[i].first_str);
+		free(input_pair[i].second_str);
+	}
+
+    return 0;
+}

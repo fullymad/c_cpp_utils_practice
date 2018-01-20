@@ -1,0 +1,3 @@
+#cc -lc++ data.cpp -o data
+#cc -lc++ median.cpp -o median
+cc -lc++ odds.cpp -o odds

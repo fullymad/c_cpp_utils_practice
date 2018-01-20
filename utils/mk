@@ -1,0 +1,7 @@
+#cc -c -Wall -Werror -fpic llist_int.c minheap_int.c common_utils.c tnode_int.c
+#cc -shared -o libutils.so llist_int.o minheap_int.o common_utils.o tnode_int.o
+#cc -lutils -L. llist_int_test.c -o llist_int_test
+#cc -lutils -L. minheap_int_test.c -o minheap_int_test
+#cc -lutils -L. tnode_int_test.c -o tnode_int_test
+#cc -lutils -L. sort_test.c -o sort_test
+cc -lc++ cpptest.cpp -o cpptest

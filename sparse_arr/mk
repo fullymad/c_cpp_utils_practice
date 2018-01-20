@@ -1,0 +1,1 @@
+cc -lc++ sparr.cpp -o sparr
