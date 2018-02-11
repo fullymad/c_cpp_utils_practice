@@ -2,46 +2,28 @@
 https://www.hackerrank.com/challenges/find-the-running-median
 ******************************************************************************/
 #include <map>
-#include <set>
-#include <list>
-#include <cmath>
-#include <ctime>
-#include <deque>
-#include <queue>
-#include <stack>
 #include <string>
-#include <bitset>
-#include <cstdio>
-#include <limits>
-#include <vector>
-#include <climits>
-#include <cstring>
-#include <cstdlib>
-#include <fstream>
-#include <numeric>
-#include <sstream>
-#include <iostream>
-#include <algorithm>
-#include <unordered_map>
 #include <iomanip>
+#include <vector>
+#include <iostream>
 #include <cassert>
 
 using namespace std;
 
 double
 get_median(
-	vector<unsigned int> all_numbers
+	multimap<int, bool> &all_numbers,
+	int count
 )
 {
-	unsigned int	count = all_numbers.size();
-	unsigned int	index; // 'index' of median in logical sorted order
+	multimap<int, bool>::iterator iter;
+	int	index; // 'index' of median in logical sorted order
 	bool			odd_count = false;
 	double			result;
 
 	assert(count != 0);
 
-	// Pop out elements until the middle element is hit. If even number of
-	// elements, the average of the 2 middle elements will be the median.
+	// Get the middle (or average of middle 2) element(s) to find median.
 
 	if (count % 2 == 1) {
 		odd_count = true;
@@ -50,18 +32,17 @@ get_median(
 	else {
 		index = (count / 2) - 1;
 	}
-	
-	for (int i = 0; i < index; i++) {
-		pop_heap(all_numbers.begin(), all_numbers.end());
-		all_numbers.pop_back();
+
+	iter = all_numbers.begin();
+	// 'iter += index' does not work, hence the loop
+	for (int i = 1; i <= index; i++) {
+		iter++;
 	}
+	result = iter->first;
 
-	result = all_numbers[0];
-
-	if (! odd_count) {
-		pop_heap(all_numbers.begin(), all_numbers.end());
-		all_numbers.pop_back();
-		result += all_numbers[0];
+	if (! odd_count) { // Get next one and find average
+		iter++;
+		result += iter->first;
 		result /= 2;
 	}
 
@@ -70,20 +51,24 @@ get_median(
 } // get_median
 
 
+// Functionally fine but fails to perform and times out
+// NOTE: Maybe a doubly linked list with a current median pointer being tracked
+// When a new element is added before/after the current median, the pointer can
+// be adjusted.
 int main() {
 	unsigned int	count;
 	unsigned int	number;
-	vector<unsigned int> all_numbers;
+	multimap<int, bool>	all_numbers;
 
 	cin >> count;
 
 	for (int i = 0; i < count; i++) {
 		cin >> number;
 
-		all_numbers.push_back(number);
-		push_heap(all_numbers.begin(), all_numbers.end());
+		all_numbers.insert(std::pair<int, bool>(number, true));
 
-		cout << fixed << setprecision(1) << get_median(all_numbers) << endl;
+		cout << fixed << setprecision(1)
+			<< get_median(all_numbers, i + 1) << endl;
 	}
 
 	return 0;
